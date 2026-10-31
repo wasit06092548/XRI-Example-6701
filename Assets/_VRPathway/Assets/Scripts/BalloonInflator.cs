@@ -5,21 +5,23 @@ using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Inputs.Readers;
 
 /// <summary>
-/// BALLOON INFLATOR — เครื่องเป่าลูกโป่ง (ตาม tutorial "Balloon Inflator" ใน Unity Learn)
-/// การทำงาน:
-/// - เมื่อ "จับ" เครื่องเป่า ลูกโป่งจะถูก spawn ที่ปลายเครื่อง (BalloonAttach)
-/// - "กดไก (Trigger)" แรงเท่าไหร่ ลูกโป่งจะขยายตามแรงกด (Lerp ระหว่าง min-max)
-/// - กดไกสุด (ค่าใกล้ 1) ลูกโป่งจะหลุดลอยขึ้นฟ้า แล้วมีลูกใหม่ให้เป่าต่อ
-/// - ปล่อยมือกลางคัน ลูกโป่งที่เป่าค้างไว้จะหลุดลอยทันที
+/// BALLOON INFLATOR — เครื่องเป่าลูกโป่ง (รุ่นแก้บั๊ก "ปั๊มลูกโป่งไม่จำกัด")
 ///
-/// วิธีติดตั้ง (ใส่บน prefab "Inflator"):
-/// 1. เลือก GameObject ชื่อ Inflator (ตัว root)
-/// 2. Add Component > Rigidbody  (แล้วเลิกติก Use Gravity ก็ได้ ไม่เป็นไร)
-/// 3. Add Component > XR Grab Interactable
-/// 4. Add Component > Balloon Inflator (สคริปต์นี้)
-/// 5. ลากค่าในช่อง:
-///    - Balloon Attach Point = object ชื่อ "BalloonAttach" (ใน prefab Inflator)
-///    - Balloon Prefab       = prefab "Balloon" (ในโฟลเดอร์ _VRPathway/Assets/Prefabs)
+/// ทำไมรุ่นเก่าปั๊มลูกโป่งออกมาไม่จำกัด:
+/// โค้ดเก่าเช็ค "กดไกสุด (ค่า >= 0.98)" ทุกเฟรม — ถ้ากดค้างไว้แค่ 1 วินาที
+/// โค้ดจะปล่อยลูกโป่ง + spawn ลูกใหม่ราว 60-90 ครั้ง ลูกโป่งจึงพุ่งออกมาเป็นชุด
+///
+/// รุ่นใหม่ทำงานยังไง (เหมือนคลิปเพื่อน):
+/// - จับเครื่องเป่า = มีลูกโป่งเล็กๆ งอกที่ปลายท่อ (BalloonAttach)
+/// - กดไกแรงเท่าไหร่ ลูกโป่งขยาย "ตามแรงกด" (Lerp min-max)
+/// - ปล่อยไก = ลูกโป่งค่อยๆ หดกลับเล็กลง ไม่หลุด ไม่พุ่งออกมา
+/// - ปล่อยมือจากเครื่องเป่ากลางคัน = ลูกโป่งที่เป่าค้างไว้หลุดลอยขึ้นฟ้า
+/// - (ทางเลือก) เปิด Release When Fully Squeezed ถ้าอยากให้กดสุดแล้วปล่อยลูก
+///   1 ลูกต่อการกด 1 ครั้ง — กดค้างไว้ก็ได้แค่ 1 ลูกเท่านั้น ไม่มีการปั๊มรัว
+///
+/// วิธีติดตั้ง: Copy ไฟล์นี้ไปทับไฟล์เดิมที่
+/// Assets/_VRPathway/Assets/Scripts/BalloonInflator.cs
+/// (ชื่อคลาส ชื่อไฟล์ และช่องทุกช่องเหมือนเดิม ค่าที่ผูกไว้ในฉากไม่หาย)
 /// </summary>
 public class BalloonInflator : MonoBehaviour
 {
@@ -37,13 +39,23 @@ public class BalloonInflator : MonoBehaviour
     [Tooltip("ขนาดใหญ่สุดเมื่อกดไกสุด")]
     [SerializeField] float maxScale = 4f;
 
-    [Tooltip("ค่าไกที่ถือว่า 'กดสุด' แล้วปล่อยลูกโป่ง (0-1)")]
+    [Tooltip("ค่าไกที่ถือว่า 'กดสุด' (ใช้เมื่อเปิด Release When Fully Squeezed)")]
     [SerializeField] float releaseThreshold = 0.98f;
+
+    [Header("แก้บั๊กปั๊มไม่จำกัด")]
+    [Tooltip("กดไกสุดแล้วปล่อยลูกโป่ง 1 ลูกต่อการกด 1 ครั้ง (ปิด = เป่าเล่นได้ไม่มีลูกหลุดเลย แนะนำ)")]
+    [SerializeField] bool releaseWhenFullySqueezed = false;
+
+    [Tooltip("ไกต้องคลายต่ำกว่าค่านี้ก่อน จึงนับการกดสุดครั้งใหม่ได้ (กันกดค้างแล้วปล่อยรัว)")]
+    [SerializeField] float reArmThreshold = 0.3f;
 
     IXRSelectInteractable m_Interactable;
     XRInputButtonReader m_ActivateInput;
     Balloon m_BalloonInstance;
     bool m_IsHeld;
+
+    // สถานะกันปล่อยลูกโป่งถี่เกิน: true = พร้อมนับการกดสุดครั้งใหม่
+    bool m_ReleaseArmed = true;
 
     void OnEnable()
     {
@@ -73,12 +85,14 @@ public class BalloonInflator : MonoBehaviour
     void OnGrabbed(SelectEnterEventArgs args)
     {
         m_IsHeld = true;
+        m_ReleaseArmed = true;
 
         // เก็บตัวอ่านค่าไกจากคอนโทรลเลอร์ของมือที่จับ (แบบเดียวกับ InteractionAnimator ใน XRI Examples)
         var controllerInteractor = args.interactorObject as XRBaseInputInteractor;
         m_ActivateInput = controllerInteractor != null ? controllerInteractor.activateInput : null;
 
-        SpawnBalloon();
+        if (m_BalloonInstance == null)
+            SpawnBalloon();
     }
 
     void OnReleased(SelectExitEventArgs args)
@@ -125,15 +139,25 @@ public class BalloonInflator : MonoBehaviour
         }
 
         // ขนาดลูกโป่ง = แทรกค่า (Lerp) ระหว่างเล็กสุด-ใหญ่สุดตามแรงกด
-        // เหมือนบรรทัด Mathf.Lerp(1.0f, 4.0f, activateInput) ใน tutorial
+        // กด = ขยายออกจากปลายท่อ / ปล่อยไก = หดกลับเล็กลง (เหมือนคลิปเพื่อน)
         m_BalloonInstance.transform.localScale = Vector3.one * Mathf.Lerp(minScale, maxScale, trigger);
 
-        // กดไกสุด -> ปล่อยลูกโป่งลอย แล้วเตรียมลูกใหม่
-        if (trigger >= releaseThreshold)
+        // (ทางเลือก ปิดอยู่โดยปริยาย) กดไกสุด = ปล่อยลูกโป่ง 1 ลูก แล้วเตรียมลูกใหม่
+        // มีกลอน reArm กันกดค้างไว้แล้วปั๊มรัว: ไกต้องคลายต่ำกว่า reArmThreshold
+        // ก่อน จึงจะปล่อยลูกถัดไปได้ -> กด 1 ครั้ง ได้ลูก 1 ลูกเท่านั้น
+        if (releaseWhenFullySqueezed && m_BalloonInstance != null)
         {
-            m_BalloonInstance.Detach();
-            m_BalloonInstance = null;
-            SpawnBalloon();
+            if (trigger >= releaseThreshold && m_ReleaseArmed)
+            {
+                m_BalloonInstance.Detach();
+                m_BalloonInstance = null;
+                m_ReleaseArmed = false;
+                SpawnBalloon();
+            }
+            else if (trigger <= reArmThreshold)
+            {
+                m_ReleaseArmed = true;
+            }
         }
     }
 }

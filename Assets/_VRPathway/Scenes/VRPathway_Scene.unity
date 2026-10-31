@@ -12346,6 +12346,7 @@ MonoBehaviour:
   scanLayers:
     serializedVersion: 2
     m_Bits: 4294967295
+  autoDetectOrigin: 1
   screenAnimator: {fileID: 859266518}
   openParameter: Opened
   nameText: {fileID: 859266515}
@@ -30846,6 +30847,8 @@ MonoBehaviour:
   minScale: 0.2
   maxScale: 4
   releaseThreshold: 0.98
+  releaseWhenFullySqueezed: 0
+  reArmThreshold: 0.3
 --- !u!114 &1979315179
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -5,25 +5,30 @@ using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using TMPro;
 
 /// <summary>
-/// SCANNER — เครื่องสแกนวัตถุ (ตามโจทย์การบ้าน XRI Example)
-/// การทำงาน:
-/// - เมื่อ "จับ" เครื่องสแกนเนอร์ หน้าจอจะเปิด (Animator parameter "Opened")
-///   และเลเซอร์จะส่องออกมา
-/// - เลเซอร์ยิง Raycast ไปข้างหน้า ถ้าชนวัตถุ เส้นจะหดมาจบที่ตัววัตถุ (เหมือน tutorial)
-/// - หน้าจอแสดง "ชื่อวัตถุ" (NameText) และ "ระยะห่าง" (PositionText)
-/// - ปล่อยมือ = หน้าจอพับปิด เลเซอร์ดับ
+/// SCANNER LASER — เครื่องสแกนวัตถุ (รุ่นแก้บั๊ก "เลเซอร์พุ่งออกจากปุ่ม")
 ///
-/// วิธีติดตั้ง (ใส่บน prefab "Scanner"):
-/// 1. เลือก GameObject ชื่อ Scanner (ตัว root ที่มี Rigidbody + MeshCollider)
-/// 2. Add Component > XR Grab Interactable
-/// 3. Add Component > Scanner Laser (สคริปต์นี้)
-/// 4. ลาก child ใน prefab มาใส่ในช่อง:
-///    - Laser Line        = object ชื่อ "Laser" (มี Line Renderer)
-///    - Screen Animator   = ตัว Scanner root เอง (มี Animator)
-///    - Name Text         = object ชื่อ "NameText" (TextMeshPro)
-///    - Position Text     = object ชื่อ "PositionText" (TextMeshPro)
-///    - Laser Origin      = object ชื่อ "AttachPoint" (หรือตัว Scanner เอง)
-/// 5. ตั้ง Interaction Layer Mask ของ XR Grab Interactable = Default (หรือ "Grab")
+/// ทำไมรุ่นเก่าเลเซอร์พุ่งออกจากปุ่ม:
+/// ในฉาก ช่อง Laser Origin ถูกลากไปผูกกับ object ชื่อ "AttachPoint"
+/// (จุดหลังเครื่อง ติดกับปุ่มกด ScannerTrigger) ไม่ใช่ object ชื่อ "Laser"
+/// ที่อยู่หน้าเครื่อง เลเซอร์จึงยิงออกจากหลัง/ตรงปุ่มแทนที่จะยิงออกหน้าเครื่อง
+///
+/// รุ่นใหม่ทำงานยังไง:
+/// - Auto Detect Origin (เปิดอยู่): สคริปต์จะหาจุดยิงที่ "หน้าเครื่อง" ให้เอง
+///   โดยเอา transform ของ object ที่มี Line Renderer (ใน prefab คือ object ชื่อ "Laser"
+///   อยู่หน้าเครื่อง) หรือ child ที่ชื่อ Laser / LaserOrigin / Muzzle / LaserPoint
+///   ไม่ต้องแก้อะไรใน Inspector เลย
+/// - กันเลเซอร์ยิงโดนตัวเครื่องสแกนเอง (RaycastNonAlloc + ข้าม collider
+///   ที่เป็นลูกของตัวเครื่อง) เหลือแค่วัตถุจริงตรงหน้า
+/// - ที่เหลือเหมือนเดิม: จับเครื่อง = หน้าจอเปิด + เลเซอร์ส่อง, ปล่อย = ปิด
+///   หน้าจอแสดงชื่อวัตถุ + ระยะห่าง, เส้นเลเซอร์ยืด-หดตามระยะที่ชน
+///
+/// วิธีติดตั้ง: Copy ไฟล์นี้ไปทับไฟล์เดิมที่
+/// Assets/_VRPathway/Assets/Scripts/ScannerLaser.cs
+/// (ชื่อคลาส ชื่อไฟล์ และช่องทุกช่องเหมือนเดิม ค่าที่ผูกไว้ในฉากไม่หาย)
+///
+/// ตรวจสอบว่าแก้สำเร็จ: กด Play แล้วดู Console ต้องมีข้อความ
+///   [ScannerLaser] ... : จุดยิงเลเซอร์ = Laser
+/// แล้วเลเซอร์จะพุ่งออกจากหน้าเครื่องเหมือนใน prefab
 /// </summary>
 public class ScannerLaser : MonoBehaviour
 {
@@ -39,6 +44,10 @@ public class ScannerLaser : MonoBehaviour
 
     [Tooltip("Layer ของวัตถุที่สแกนได้")]
     [SerializeField] LayerMask scanLayers = ~0;
+
+    [Header("แก้บั๊กจุดยิงเลเซอร์")]
+    [Tooltip("หาจุดยิงที่หน้าเครื่องให้เอง (แนะนำให้เปิด) — จะใช้ object ที่มี Line Renderer หรือ child ชื่อ Laser/LaserOrigin/Muzzle แทนค่า Laser Origin ที่ผูกผิดในฉาก")]
+    [SerializeField] bool autoDetectOrigin = true;
 
     [Header("หน้าจอเครื่องสแกน")]
     [Tooltip("Animator ของหน้าจอ (ใช้ parameter ชื่อ Opened)")]
@@ -56,12 +65,19 @@ public class ScannerLaser : MonoBehaviour
     [SerializeField] Color idleColor = new Color(1f, 0.25f, 0.25f, 0.6f);
     [SerializeField] Color foundColor = new Color(0.25f, 1f, 0.4f, 0.9f);
 
+    // บัฟเฟอร์เก็บผลชนหลายจุด (RaycastNonAlloc ไม่ allocate หน่วยกลาง)
+    readonly RaycastHit[] m_Hits = new RaycastHit[16];
+
     IXRSelectInteractable m_Interactable;
     bool m_IsHeld;
+    bool m_HasHit;
     RaycastHit m_Hit;
 
     void Awake()
     {
+        if (autoDetectOrigin)
+            laserOrigin = FindFrontPoint();
+
         if (laserOrigin == null)
             laserOrigin = transform;
 
@@ -71,6 +87,36 @@ public class ScannerLaser : MonoBehaviour
             laserLine.positionCount = 2;
             laserLine.enabled = false;
         }
+    }
+
+    /// <summary>
+    /// หาจุดยิงเลเซอร์ที่ "หน้าเครื่อง" — แก้ปัญหาที่ฉากผูก Laser Origin
+    /// ไปกับ AttachPoint (หลังเครื่อง/ตรงปุ่ม) แทนที่จะเป็นหน้าเครื่อง
+    /// </summary>
+    Transform FindFrontPoint()
+    {
+        // ทางเลือกแรก: object ที่ถือ Line Renderer อยู่ (ใน prefab คือ object ชื่อ "Laser" อยู่หน้าเครื่อง)
+        if (laserLine != null)
+        {
+            Debug.Log($"[ScannerLaser] {name} : จุดยิงเลเซอร์ = {laserLine.transform.name} (หน้าเครื่อง)", this);
+            return laserLine.transform;
+        }
+
+        // ทางเลือกรอง: หาจากชื่อ child ที่บอกว่าเป็นปากกระบอกเลเซอร์
+        string[] names = { "Laser", "LaserOrigin", "Muzzle", "LaserPoint" };
+        foreach (string childName in names)
+        {
+            Transform found = transform.Find(childName);
+            if (found != null)
+            {
+                Debug.Log($"[ScannerLaser] {name} : จุดยิงเลเซอร์ = {found.name} (หน้าเครื่อง)", this);
+                return found;
+            }
+        }
+
+        // หาไม่เจอ ใช้ตัวเครื่องเอง แล้วเตือนให้รู้
+        Debug.LogWarning($"[ScannerLaser] {name} : ไม่พบจุดยิงหน้าเครื่อง จึงใช้ตัวเครื่องเป็นจุดยิง (ถ้าเลเซอร์ทิศผิด ให้ลาก object หน้าเครื่องใส่ช่อง Laser Origin)", this);
+        return transform;
     }
 
     void OnEnable()
@@ -141,33 +187,68 @@ public class ScannerLaser : MonoBehaviour
         Vector3 origin = laserOrigin.position;
         Vector3 direction = laserOrigin.forward;
 
-        bool hasHit = Physics.Raycast(
-            origin, direction, out m_Hit, maxScanDistance, scanLayers,
-            QueryTriggerInteraction.Ignore);
+        m_HasHit = ScanForNearestHit(origin, direction);
 
-        float distance = hasHit ? m_Hit.distance : maxScanDistance;
-        Vector3 endPoint = hasHit ? m_Hit.point : origin + direction * maxScanDistance;
+        float distance = m_HasHit ? m_Hit.distance : maxScanDistance;
+        Vector3 endPoint = m_HasHit ? m_Hit.point : origin + direction * maxScanDistance;
 
         // วาด ray ใน Scene view ให้เห็นตอน debug (เหมือนใน tutorial)
-        Debug.DrawRay(origin, direction * distance, hasHit ? Color.green : Color.red);
+        Debug.DrawRay(origin, direction * distance, m_HasHit ? Color.green : Color.red);
 
         // เลเซอร์ยืด-หดตามระยะที่ชน (Dynamically change the size of the laser)
         if (laserLine != null)
         {
             laserLine.SetPosition(0, origin);
             laserLine.SetPosition(1, endPoint);
-            laserLine.startColor = hasHit ? foundColor : idleColor;
-            laserLine.endColor = hasHit ? foundColor : idleColor;
+            laserLine.startColor = m_HasHit ? foundColor : idleColor;
+            laserLine.endColor = m_HasHit ? foundColor : idleColor;
         }
 
         // แสดงผลบนหน้าจอเครื่องสแกน
         if (nameText != null)
-            nameText.text = hasHit ? CleanName(m_Hit.collider.name) : "NO OBJECT";
+            nameText.text = m_HasHit ? CleanName(m_Hit.collider.name) : "NO OBJECT";
 
         if (positionText != null)
-            positionText.text = hasHit
+            positionText.text = m_HasHit
                 ? $"{m_Hit.distance:0.00} m"
                 : $"{maxScanDistance:0} m";
+    }
+
+    /// <summary>
+    /// ยิง ray แบบ NonAlloc เก็บทุกจุดที่ชน แล้วข้าม "ตัวเครื่องสแกนเอง"
+    /// (collider ที่เป็นลูกของเครื่อง เช่น ตัวเครื่อง/ปุ่มกด) เพื่อให้ได้
+    /// วัตถุจริงที่อยู่ตรงหน้าเท่านั้น เลือกจุดที่ใกล้ที่สุด
+    /// </summary>
+    bool ScanForNearestHit(Vector3 origin, Vector3 direction)
+    {
+        int count = Physics.RaycastNonAlloc(
+            origin, direction, m_Hits, maxScanDistance, scanLayers,
+            QueryTriggerInteraction.Ignore);
+
+        bool found = false;
+        float nearest = float.MaxValue;
+        int nearestIndex = -1;
+
+        for (int i = 0; i < count; i++)
+        {
+            // ข้าม hit ที่โดนตัวเครื่องสแกนเอง (collider เป็นลูกของ object นี้)
+            if (m_Hits[i].collider == null)
+                continue;
+            if (m_Hits[i].collider.transform.IsChildOf(transform))
+                continue;
+
+            if (m_Hits[i].distance < nearest)
+            {
+                nearest = m_Hits[i].distance;
+                nearestIndex = i;
+                found = true;
+            }
+        }
+
+        if (found)
+            m_Hit = m_Hits[nearestIndex];
+
+        return found;
     }
 
     string CleanName(string raw)
